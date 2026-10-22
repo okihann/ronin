@@ -9,3 +9,7 @@ config.json
 
 # cross-build output
 /dist/
+
+# GitHub App private keys — never commit
+*.pem
+*.private-key.pem

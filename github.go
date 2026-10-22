@@ -169,8 +169,7 @@ func (a ghAction) read() bool { return a.Method == "GET" }
 var ghActions = []ghAction{
 	// repo
 	{"repo.info", "GET", "/repos/{repo}", []string{"repo"}, "", "Repository metadata"},
-	{"repo.list", "GET", "/user/repos", nil, "", "Repositories the installation can access"},
-	{"repo.create", "POST", "/user/repos", nil, "", "Create a repository (body)"},
+	{"repo.list", "GET", "/installation/repositories", nil, "", "Repositories the installation can access"},
 	{"repo.branches", "GET", "/repos/{repo}/branches", []string{"repo"}, "", "List branches"},
 	{"repo.branch.get", "GET", "/repos/{repo}/branches/{branch}", []string{"repo", "branch"}, "", "One branch"},
 	{"repo.branch.create", "POST", "/repos/{repo}/git/refs", []string{"repo"}, "", "Create a ref (body: ref, sha)"},
@@ -229,7 +228,7 @@ var ghActions = []ghAction{
 	{"search.commits", "GET", "/search/commits", nil, "", "Search commits (--query q=...)"},
 	// user
 	{"user.get", "GET", "/users/{user}", []string{"user"}, "", "Public user profile"},
-	{"user.me", "GET", "/user", nil, "", "Authenticated bot user"},
+	{"rate.limit", "GET", "/rate_limit", nil, "", "Rate limit status for the installation token"},
 }
 
 func findGHAction(name string) (ghAction, bool) {
