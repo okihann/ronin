@@ -606,7 +606,11 @@ func handleExec(w http.ResponseWriter, r *http.Request) {
 
 	if data, err := os.ReadFile(cwdFile.Name()); err == nil {
 		newCwd := strings.TrimSpace(string(data))
-		if newCwd != "" {
+		// Only report a cwd the client can legally send back next turn.
+		// A cd outside the allowed roots is harmless for this command, but
+		// echoing it would make the client send an out-of-root path and
+		// every subsequent block would fail with "invalid root".
+		if newCwd != "" && rootAllowed(newCwd) {
 			emit(map[string]any{"type": "cwd", "data": newCwd})
 		}
 	}
