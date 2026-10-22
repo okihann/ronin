@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -335,6 +336,9 @@ func runGH(args []string) int {
 	if rest[0] == "list" {
 		return ghList(c)
 	}
+	if rest[0] == "push" {
+		return ghPush(c, rest[1:])
+	}
 	return ghRun(c, rest[0], rest[1:])
 }
 
@@ -428,5 +432,73 @@ func ghRun(c Config, name string, rest []string) int {
 		fmt.Fprintf(os.Stderr, "http %d\n", code)
 		return 1
 	}
+	return 0
+}
+
+func ghPush(c Config, args []string) int {
+	dir := "."
+	var pos []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--dir" && i+1 < len(args) {
+			dir = args[i+1]
+			i++
+			continue
+		}
+		pos = append(pos, args[i])
+	}
+	remote, branch := "origin", ""
+	if len(pos) > 0 {
+		remote = pos[0]
+	}
+	if len(pos) > 1 {
+		branch = pos[1]
+	}
+	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree").Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
+		fmt.Fprintln(os.Stderr, "not a git work tree:", dir)
+		return 2
+	}
+	policy := c.ghPolicy("push", false)
+	key := "gh.push." + ghApprovalKey(dir+"|"+remote+"|"+branch, "")
+	switch policy {
+	case "deny":
+		fmt.Fprintln(os.Stderr, "blocked by GitHub policy: push is denied")
+		return 126
+	case "confirm":
+		if os.Getenv("RONIN_GH_APPROVAL") != key {
+			fmt.Fprintf(os.Stderr, "[ronin-gh-confirm] action=push approval=%s\n", key)
+			return 125
+		}
+	}
+	tok, err := ghInstallationToken(c)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	ap, err := os.CreateTemp("", "ronin-askpass-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	apPath := ap.Name()
+	defer os.Remove(apPath)
+	_, _ = ap.WriteString("#!/bin/sh\ncase \"$1\" in\n  *Username*) printf x-access-token ;;\n  *) printf '%s' \"$RONIN_GH_TOKEN\" ;;\nesac\n")
+	ap.Close()
+	if err := os.Chmod(apPath, 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	gitArgs := []string{"-C", dir, "push", remote}
+	if branch != "" {
+		gitArgs = append(gitArgs, branch)
+	}
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Env = append(os.Environ(), "RONIN_GH_TOKEN="+tok, "GIT_ASKPASS="+apPath, "GIT_TERMINAL_PROMPT=0")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "git push failed:", err)
+		return 1
+	}
+	fmt.Println("pushed", remote, branch)
 	return 0
 }
