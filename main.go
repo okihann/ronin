@@ -918,6 +918,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp" {
 		os.Exit(runMCP(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "video" {
+		os.Exit(runVideo(os.Args[2:]))
+	}
 	flag.Parse()
 
 	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
