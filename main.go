@@ -5,9 +5,9 @@ import (
 	"archive/zip"
 	"bufio"
 	"compress/gzip"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -36,25 +36,27 @@ type NgrokCfg struct {
 }
 
 type Config struct {
-	Port       int      `json:"port"`
-	Root       string   `json:"root"`
-	AllowRoots []string `json:"allow_roots"`
-	Timeout    string   `json:"timeout"`
-	Token      string   `json:"token"`
-	ReadOnly   bool     `json:"read_only"`
+	Port           int      `json:"port"`
+	Root           string   `json:"root"`
+	AllowRoots     []string `json:"allow_roots"`
+	Timeout        string   `json:"timeout"`
+	Token          string   `json:"token"`
+	ReadOnly       bool     `json:"read_only"`
 	AllowedOrigins []string `json:"allowed_origins"`
-	Ngrok      NgrokCfg `json:"ngrok"`
+	Ngrok          NgrokCfg `json:"ngrok"`
+	MCP            MCPCfg   `json:"mcp"`
 }
 
 func defaultConfig() Config {
 	return Config{
-		Port:       8080,
-		Root:       ".",
-		AllowRoots: []string{},
-		Timeout:    "5m",
-		Token:      "",
-		ReadOnly:   false,
-		AllowedOrigins: []string{"https://chat.deepseek.com","https://chatgpt.com","https://chat.openai.com","https://claude.ai","https://gemini.google.com","http://localhost:8080","http://127.0.0.1:8080"},
+		Port:           8080,
+		Root:           ".",
+		AllowRoots:     []string{},
+		Timeout:        "5m",
+		Token:          "",
+		ReadOnly:       false,
+		AllowedOrigins: []string{"https://chat.deepseek.com", "https://chatgpt.com", "https://chat.openai.com", "https://claude.ai", "https://gemini.google.com", "http://localhost:8080", "http://127.0.0.1:8080"},
+		MCP:            MCPCfg{Servers: map[string]MCPServerCfg{}},
 		Ngrok: NgrokCfg{
 			Enabled:   false,
 			Authtoken: "",
@@ -105,16 +107,18 @@ func defaultConfigPath() string {
 // -------- runtime state --------
 
 var (
-	cfg         Config
-	timeout     time.Duration
-	defaultRoot string
-	allowRoots  []string
-	authToken   string
-	readOnly    bool
+	cfg            Config
+	timeout        time.Duration
+	defaultRoot    string
+	allowRoots     []string
+	authToken      string
+	readOnly       bool
+	configFilePath string
+	mcpApproval    string
 
-	ngrokURL string
-	ngrokMu  sync.RWMutex
-	ngrokCmd *exec.Cmd
+	ngrokURL       string
+	ngrokMu        sync.RWMutex
+	ngrokCmd       *exec.Cmd
 	allowedOrigins []string
 )
 
@@ -257,11 +261,12 @@ func cors(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
 	} else {
 		w.Header().Set("Access-Control-Allow-Headers",
-			"Authorization, Content-Type, ngrok-skip-browser-warning, X-Requested-With, X-Ronin-Confirm, X-Ronin-Read-Only")
+			"Authorization, Content-Type, ngrok-skip-browser-warning, X-Requested-With, X-Ronin-Confirm, X-Ronin-Read-Only, X-Ronin-MCP-Approval")
 	}
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 	w.Header().Set("Access-Control-Max-Age", "86400")
 }
+
 type execRequest struct {
 	Command string `json:"command"`
 	Root    string `json:"root,omitempty"`
@@ -554,6 +559,8 @@ func handleExec(w http.ResponseWriter, r *http.Request) {
 	cmd.Env = append(os.Environ(),
 		"RONIN=1",
 		"__RONIN_CWD_FILE="+cwdFile.Name(),
+		"RONIN_CONFIG="+configFilePath,
+		"RONIN_MCP_APPROVAL="+r.Header.Get("X-Ronin-MCP-Approval"),
 	)
 
 	stdout, err := cmd.StdoutPipe()
@@ -904,6 +911,9 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	configPath := flag.String("config", defaultConfigPath(), "path to config.json")
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		os.Exit(runMCP(os.Args[2:]))
+	}
 	flag.Parse()
 
 	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
@@ -953,6 +963,11 @@ func main() {
 	}
 
 	authToken = cfg.Token
+	if abs, err := filepath.Abs(*configPath); err == nil {
+		configFilePath = abs
+	} else {
+		configFilePath = *configPath
+	}
 	readOnly = cfg.ReadOnly
 	allowedOrigins = cfg.AllowedOrigins
 

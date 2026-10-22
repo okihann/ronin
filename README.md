@@ -58,6 +58,49 @@ and run Test connection.
 | allowed_origins   | Browser origins allowed to call the server                    |
 | ngrok             | Optional tunnel: enabled, authtoken, domain, data_dir         |
 
+## MCP tools
+
+Ronin can act as an **MCP client**, letting the chat AI call tools from
+configured MCP servers (GitHub, databases, browsers, anything that speaks
+the Model Context Protocol). The AI reaches them through bash, so they
+compose with normal shell work and stay behind the exec security path.
+
+Add servers to config.json:
+
+    "mcp": {
+      "servers": {
+        "github": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github"],
+          "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..." },
+          "default_policy": "deny",
+          "tools": {
+            "list_issues": "allow",
+            "get_file_contents": "allow",
+            "create_issue": "confirm",
+            "merge_pull_request": "deny"
+          }
+        }
+      }
+    }
+
+Then the AI discovers and calls tools with:
+
+    ./ronin mcp list
+    ./ronin mcp call github.list_issues '{"owner":"me","repo":"x"}'
+
+Tool policies are tiered:
+
+- **allow** - runs immediately.
+- **confirm** - the call returns exit 125 with an approval key bound to
+  the server, tool, and hashed arguments. The userscript prompts the user
+  and, on approval, re-runs the same block with a signed header. A key for
+  one set of arguments cannot approve a different call.
+- **deny** - refused with exit 126; the tool is never contacted.
+
+Unlisted tools fall back to `default_policy`, which defaults to **deny**
+(fail-closed). Run `ronin mcp list` to see every tool and its policy.
+
 ## Security model
 
 Three layers, evaluated in order:

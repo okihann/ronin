@@ -443,20 +443,21 @@
   }
 
   // ============ EXECUTION ============
-  function buildHeaders() {
+  function buildHeaders(approvalKey) {
     const h = { 'Content-Type': 'application/json' };
     if (cfg.skipNgrokWarning) h['ngrok-skip-browser-warning'] = 'true';
     if (cfg.token) h['Authorization'] = 'Bearer ' + cfg.token;
     if (state.batchApproved) h['X-Ronin-Confirm'] = 'yes';
     if (cfg.readOnly) h['X-Ronin-Read-Only'] = 'yes';
+    if (approvalKey) h['X-Ronin-MCP-Approval'] = approvalKey;
     return h;
   }
 
-  async function execOnServer(command, onChunk, onCwd, onExit, onBlocked, onError) {
+  async function execOnServer(command, onChunk, onCwd, onExit, onBlocked, onError, approvalKey) {
     const body = { command };
     if (state.currentCwd) body.root = state.currentCwd;
     const url = cfg.serverUrl.replace(/\/$/, '') + '/exec';
-    const headers = buildHeaders();
+    const headers = buildHeaders(approvalKey);
     const payload = JSON.stringify(body);
 
     try {
@@ -618,7 +619,7 @@
     if (cfg.autoSend) typeAndSend(resultBlock);
   }
 
-  function runOneBlock(command) {
+  function runOneBlockOnce(command, approvalKey) {
     return new Promise((resolve) => {
       let localOutput = '';
       let truncated = false;
@@ -643,17 +644,47 @@
           const tag = kind === 'BLOCKED' ? '[BLOCKED BY SERVER] ' : '[SERVER WANTS CONFIRMATION] ';
           localOutput += '\n' + tag + reason;
           overlay.appendOutput('\n' + tag + reason + '\n');
-          resolve({ command, output: localOutput, code: kind === 'BLOCKED' ? 126 : 125, truncated });
+          resolve({ command, output: localOutput, code: kind === 'BLOCKED' ? 126 : 125, truncated, reason });
         },
         (err) => {
           localOutput += '\n[error] ' + err + '\n';
           overlay.appendOutput('\n[error] ' + err + '\n');
           resolve({ command, output: localOutput, code: -1, truncated });
-        }
+        },
+        approvalKey
       );
     });
   }
 
+  // Parse the "[ronin-mcp-confirm] server=.. tool=.. approval=.." marker
+  // that the ronin CLI emits (on stderr, so it arrives in output) when an
+  // MCP tool requires confirmation.
+  function extractMcpApproval(result) {
+    if (result.code !== 125 || !result.output) return null;
+    const m = result.output.match(/\[ronin-mcp-confirm\]\s+server=(\S+)\s+tool=(\S+)\s+approval=(\S+)/);
+    if (!m) return null;
+    return { server: m[1], tool: m[2], key: m[3] };
+  }
+
+  async function runOneBlock(command) {
+    let result = await runOneBlockOnce(command);
+    for (let guard = 0; guard < 3; guard++) {
+      const req = extractMcpApproval(result);
+      if (!req) break;
+      const ok = await overlay.showConfirmDialog(
+        'Approve MCP tool call?',
+        'Server: ' + req.server + '\nTool: ' + req.tool +
+        '\n\nArgs approval key:\n' + req.key +
+        '\n\nApproving re-runs this block once with a signed approval header.'
+      );
+      if (!ok) {
+        overlay.appendOutput('\n[mcp call skipped by user]\n');
+        return { command, output: result.output + '\n[mcp call skipped by user]', code: 125, truncated: result.truncated };
+      }
+      result = await runOneBlockOnce(command, req.key);
+    }
+    return result;
+  }
   function formatResultsForAI(results) {
     const parts = [];
     for (let i = 0; i < results.length; i++) {
@@ -1159,6 +1190,27 @@ The environment enforces a layered security policy:
 3. Read-only mode may be on: only commands that read (cat, ls, grep, git log, etc.) are allowed. No redirects, no sed -i, no find -delete.
 
 Do not waste turns trying to circumvent these. If a command is blocked or needs confirmation, the user will see it. Adapt.
+
+# MCP tools (optional)
+
+This server may also act as an MCP client, exposing tools from configured
+MCP servers. Discover them by running this in a bash block:
+
+    ./ronin mcp list
+
+That prints one line per tool as:  server.tool  [policy]  description
+where policy is allow (runs immediately), confirm (the user is prompted),
+or deny (will fail with exit 126 - do not call these).
+
+Invoke a tool with:
+
+    ./ronin mcp call server.tool '{"arg":"value"}'
+
+The JSON is passed as tool arguments. Tools marked confirm will return
+exit 125 with a [ronin-mcp-confirm] marker; the userscript then asks the
+user to approve and re-runs the same block automatically. Do not try to
+work around that prompt. If no MCP servers are configured, list prints a
+short notice - that is fine, just continue with normal shell work.
 
 # CRITICAL: First turn behavior
 
