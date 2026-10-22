@@ -30,6 +30,7 @@
     token:     GM_getValue('token', ''),
     projectPath: GM_getValue('projectPath', ''),
     autoSend:  GM_getValue('autoSend', true),
+    sendDelay: GM_getValue('sendDelay', 3500),
     confirmDangerous: GM_getValue('confirmDangerous', true),
     confirmAll: GM_getValue('confirmAll', false),
     readOnly: GM_getValue('readOnly', false),
@@ -616,7 +617,16 @@
     if (state.history.length > MAX_HISTORY) state.history.pop();
     saveHistory();
 
-    if (cfg.autoSend) typeAndSend(resultBlock);
+    if (cfg.autoSend) {
+      const base = Math.max(0, cfg.sendDelay | 0);
+      const jitter = Math.floor(base * 0.25 * Math.random());
+      const wait = base + jitter;
+      if (wait > 0) {
+        overlay.setStatus("waiting " + (wait / 1000).toFixed(1) + "s before sending...");
+        await new Promise(r => setTimeout(r, wait));
+      }
+      typeAndSend(resultBlock);
+    }
   }
 
   function runOneBlockOnce(command, approvalKey) {
@@ -909,6 +919,10 @@
             <label for="autoSend">Auto-send results to chat</label>
           </div>
           <div class="row">
+            <label for="sendDelay" style="min-width:140px">Send delay (ms)</label>
+            <input id="sendDelay" type="number" min="0" step="250" style="width:90px">
+          </div>
+          <div class="row">
             <input id="confirmDangerous" type="checkbox">
             <label for="confirmDangerous">Confirm sensitive commands</label>
           </div>
@@ -1038,6 +1052,7 @@
         $('token').value = cfg.token;
         $('projectPath').value = cfg.projectPath;
         $('autoSend').checked = cfg.autoSend;
+        $('sendDelay').value = cfg.sendDelay;
         $('confirmDangerous').checked = cfg.confirmDangerous;
         $('confirmAll').checked = cfg.confirmAll;
         $('readOnly').checked = cfg.readOnly;
@@ -1051,6 +1066,7 @@
       cfg.token = $('token').value.trim();
       cfg.projectPath = $('projectPath').value.trim();
       cfg.autoSend = $('autoSend').checked;
+      cfg.sendDelay = Math.max(0, parseInt($('sendDelay').value, 10) || 0);
       cfg.confirmDangerous = $('confirmDangerous').checked;
       cfg.confirmAll = $('confirmAll').checked;
       cfg.readOnly = $('readOnly').checked;
@@ -1062,6 +1078,7 @@
       GM_setValue('token', cfg.token);
       GM_setValue('projectPath', cfg.projectPath);
       GM_setValue('autoSend', cfg.autoSend);
+      GM_setValue('sendDelay', cfg.sendDelay);
       GM_setValue('confirmDangerous', cfg.confirmDangerous);
       GM_setValue('confirmAll', cfg.confirmAll);
       GM_setValue('readOnly', cfg.readOnly);
