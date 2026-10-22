@@ -1,0 +1,8 @@
+# runtime config holds the auth token — never commit
+config.json
+.ngrok/
+# local build artifacts
+/ronin
+*.exe
+# editor backups of source (kept locally, not in history)
+*.bak
