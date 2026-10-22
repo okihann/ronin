@@ -444,21 +444,21 @@
   }
 
   // ============ EXECUTION ============
-  function buildHeaders(approvalKey) {
+  function buildHeaders(approval) {
     const h = { 'Content-Type': 'application/json' };
     if (cfg.skipNgrokWarning) h['ngrok-skip-browser-warning'] = 'true';
     if (cfg.token) h['Authorization'] = 'Bearer ' + cfg.token;
     if (state.batchApproved) h['X-Ronin-Confirm'] = 'yes';
     if (cfg.readOnly) h['X-Ronin-Read-Only'] = 'yes';
-    if (approvalKey) h['X-Ronin-MCP-Approval'] = approvalKey;
+    if (approval && approval.name && approval.value) h[approval.name] = approval.value;
     return h;
   }
 
-  async function execOnServer(command, onChunk, onCwd, onExit, onBlocked, onError, approvalKey) {
+  async function execOnServer(command, onChunk, onCwd, onExit, onBlocked, onError, approval) {
     const body = { command };
     if (state.currentCwd) body.root = state.currentCwd;
     const url = cfg.serverUrl.replace(/\/$/, '') + '/exec';
-    const headers = buildHeaders(approvalKey);
+    const headers = buildHeaders(approval);
     const payload = JSON.stringify(body);
 
     try {
@@ -629,7 +629,7 @@
     }
   }
 
-  function runOneBlockOnce(command, approvalKey) {
+  function runOneBlockOnce(command, approval) {
     return new Promise((resolve) => {
       let localOutput = '';
       let truncated = false;
@@ -661,7 +661,7 @@
           overlay.appendOutput('\n[error] ' + err + '\n');
           resolve({ command, output: localOutput, code: -1, truncated });
         },
-        approvalKey
+        approval
       );
     });
   }
@@ -669,29 +669,37 @@
   // Parse the "[ronin-mcp-confirm] server=.. tool=.. approval=.." marker
   // that the ronin CLI emits (on stderr, so it arrives in output) when an
   // MCP tool requires confirmation.
-  function extractMcpApproval(result) {
+  function extractApproval(result) {
     if (result.code !== 125 || !result.output) return null;
-    const m = result.output.match(/\[ronin-mcp-confirm\]\s+server=(\S+)\s+tool=(\S+)\s+approval=(\S+)/);
-    if (!m) return null;
-    return { server: m[1], tool: m[2], key: m[3] };
+    let m = result.output.match(/\[ronin-mcp-confirm\]\s+server=(\S+)\s+tool=(\S+)\s+approval=(\S+)/);
+    if (m) return {
+      title: 'Approve MCP tool call?',
+      body: 'Server: ' + m[1] + '\nTool: ' + m[2] + '\n\nApproval key:\n' + m[3],
+      approval: { name: 'X-Ronin-MCP-Approval', value: m[3] },
+    };
+    m = result.output.match(/\[ronin-gh-confirm\]\s+action=(\S+)\s+approval=(\S+)/);
+    if (m) return {
+      title: 'Approve GitHub action?',
+      body: 'Action: ' + m[1] + '\n\nApproval key:\n' + m[2],
+      approval: { name: 'X-Ronin-GH-Approval', value: m[2] },
+    };
+    return null;
   }
 
   async function runOneBlock(command) {
     let result = await runOneBlockOnce(command);
     for (let guard = 0; guard < 3; guard++) {
-      const req = extractMcpApproval(result);
+      const req = extractApproval(result);
       if (!req) break;
       const ok = await overlay.showConfirmDialog(
-        'Approve MCP tool call?',
-        'Server: ' + req.server + '\nTool: ' + req.tool +
-        '\n\nArgs approval key:\n' + req.key +
-        '\n\nApproving re-runs this block once with a signed approval header.'
+        req.title,
+        req.body + '\n\nApproving re-runs this block once with a signed approval header.'
       );
       if (!ok) {
-        overlay.appendOutput('\n[mcp call skipped by user]\n');
-        return { command, output: result.output + '\n[mcp call skipped by user]', code: 125, truncated: result.truncated };
+        overlay.appendOutput('\n[call skipped by user]\n');
+        return { command, output: result.output + '\n[call skipped by user]', code: 125, truncated: result.truncated };
       }
-      result = await runOneBlockOnce(command, req.key);
+      result = await runOneBlockOnce(command, req.approval);
     }
     return result;
   }

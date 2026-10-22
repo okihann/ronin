@@ -36,15 +36,16 @@ type NgrokCfg struct {
 }
 
 type Config struct {
-	Port           int      `json:"port"`
-	Root           string   `json:"root"`
-	AllowRoots     []string `json:"allow_roots"`
-	Timeout        string   `json:"timeout"`
-	Token          string   `json:"token"`
-	ReadOnly       bool     `json:"read_only"`
-	AllowedOrigins []string `json:"allowed_origins"`
-	Ngrok          NgrokCfg `json:"ngrok"`
-	MCP            MCPCfg   `json:"mcp"`
+	Port           int       `json:"port"`
+	Root           string    `json:"root"`
+	AllowRoots     []string  `json:"allow_roots"`
+	Timeout        string    `json:"timeout"`
+	Token          string    `json:"token"`
+	ReadOnly       bool      `json:"read_only"`
+	AllowedOrigins []string  `json:"allowed_origins"`
+	Ngrok          NgrokCfg  `json:"ngrok"`
+	MCP            MCPCfg    `json:"mcp"`
+	GitHub         GitHubCfg `json:"github"`
 }
 
 func defaultConfig() Config {
@@ -261,7 +262,7 @@ func cors(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
 	} else {
 		w.Header().Set("Access-Control-Allow-Headers",
-			"Authorization, Content-Type, ngrok-skip-browser-warning, X-Requested-With, X-Ronin-Confirm, X-Ronin-Read-Only, X-Ronin-MCP-Approval")
+			"Authorization, Content-Type, ngrok-skip-browser-warning, X-Requested-With, X-Ronin-Confirm, X-Ronin-Read-Only, X-Ronin-MCP-Approval, X-Ronin-GH-Approval")
 	}
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 	w.Header().Set("Access-Control-Max-Age", "86400")
@@ -561,6 +562,7 @@ func handleExec(w http.ResponseWriter, r *http.Request) {
 		"__RONIN_CWD_FILE="+cwdFile.Name(),
 		"RONIN_CONFIG="+configFilePath,
 		"RONIN_MCP_APPROVAL="+r.Header.Get("X-Ronin-MCP-Approval"),
+		"RONIN_GH_APPROVAL="+r.Header.Get("X-Ronin-GH-Approval"),
 	)
 
 	stdout, err := cmd.StdoutPipe()
@@ -920,6 +922,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "video" {
 		os.Exit(runVideo(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "gh" {
+		os.Exit(runGH(os.Args[2:]))
 	}
 	flag.Parse()
 
