@@ -3,11 +3,13 @@ package main
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -217,19 +219,72 @@ func sortedServerNames(m map[string]MCPServerCfg) []string {
 func printToolResult(res json.RawMessage) bool {
 	var out struct {
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Data     string `json:"data"`
+			MimeType string `json:"mimeType"`
 		} `json:"content"`
 		IsError bool `json:"isError"`
 	}
 	if err := json.Unmarshal(res, &out); err == nil && len(out.Content) > 0 {
 		for _, c := range out.Content {
-			fmt.Println(c.Text)
+			switch c.Type {
+			case "image":
+				path, err := saveImageBlock(c.Data, c.MimeType)
+				if err != nil {
+					fmt.Printf("[image %s, %d b64 chars; save failed: %v]\n", c.MimeType, len(c.Data), err)
+				} else {
+					fmt.Printf("[image saved: %s (%s)]\n", path, c.MimeType)
+				}
+			case "resource":
+				fmt.Println("[resource content omitted]")
+			default:
+				if c.Text != "" {
+					fmt.Println(c.Text)
+				}
+			}
 		}
 		return out.IsError
 	}
 	fmt.Println(string(res))
 	return false
+}
+
+// saveImageBlock decodes an MCP image content block and writes it to
+// disk, returning the path. Text-only clients (bash, a chat box) cannot
+// render pixels, but a file on disk can be inspected or uploaded by hand.
+func saveImageBlock(b64, mime string) (string, error) {
+	dir := os.Getenv("RONIN_MCP_IMAGE_DIR")
+	if dir == "" {
+		dir = filepath.Join(os.TempDir(), "ronin-mcp-images")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return "", err
+	}
+	ext := ".bin"
+	switch mime {
+	case "image/png":
+		ext = ".png"
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/webp":
+		ext = ".webp"
+	case "image/gif":
+		ext = ".gif"
+	}
+	f, err := os.CreateTemp(dir, "mcp-*"+ext)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.Write(raw); err != nil {
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 // -------- subcommands --------
