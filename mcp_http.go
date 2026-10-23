@@ -11,8 +11,10 @@ import (
 	"time"
 )
 
-func newHTTPMCPClient(cfg MCPServerCfg) *mcpClient {
+func newHTTPMCPClient(name string, cfg MCPServerCfg) *mcpClient {
 	return &mcpClient{
+		name:    name,
+		cfg:     cfg,
 		url:     cfg.URL,
 		headers: cfg.Headers,
 		httpc:   &http.Client{Timeout: 5 * time.Minute},
@@ -22,6 +24,12 @@ func newHTTPMCPClient(cfg MCPServerCfg) *mcpClient {
 // httpPost sends one JSON-RPC message, carrying the session id once the
 // server has assigned one.
 func (c *mcpClient) httpPost(payload []byte) (*http.Response, error) {
+	return c.doPost(payload, false)
+}
+
+// doPost sends one JSON-RPC message. When force is set the access token is
+// refreshed first, which is how a 401 gets retried.
+func (c *mcpClient) doPost(payload []byte, force bool) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodPost, c.url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
@@ -33,6 +41,15 @@ func (c *mcpClient) httpPost(payload []byte) (*http.Response, error) {
 	}
 	if c.sessionID != "" {
 		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+	var tok string
+	if force {
+		tok, _ = forceRefreshMCPToken(c.name, c.cfg)
+	} else {
+		tok, _ = ensureMCPToken(c.name, c.cfg)
+	}
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := c.httpc.Do(req)
 	if err != nil {
@@ -56,6 +73,12 @@ func (c *mcpClient) httpRequest(method string, params any) (json.RawMessage, err
 	resp, err := c.httpPost(body)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized && c.cfg.Auth != nil && c.cfg.Auth.Type == "oauth" {
+		resp.Body.Close()
+		if resp, err = c.doPost(body, true); err != nil {
+			return nil, err
+		}
 	}
 	defer resp.Body.Close()
 

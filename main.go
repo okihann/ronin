@@ -143,8 +143,8 @@ func init() {
 		// fork bomb
 		regexp.MustCompile(`:\(\)\s*\{\s*:\|:&\s*\}\s*;:`),
 		// rm -rf / and variants
-		regexp.MustCompile(`\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+(/|~|\$HOME|/\*)`),
-		regexp.MustCompile(`\brm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+(/|~|\$HOME|/\*)`),
+		regexp.MustCompile(`\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+(/|~|\$HOME|/\*)(\s|$)`),
+		regexp.MustCompile(`\brm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+(/|~|\$HOME|/\*)(\s|$)`),
 		// filesystem creation
 		regexp.MustCompile(`\bmkfs\b`),
 		// power control

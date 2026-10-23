@@ -25,6 +25,7 @@ type MCPServerCfg struct {
 	Args          []string          `json:"args"`
 	Env           map[string]string `json:"env"`
 	URL           string            `json:"url"`
+	Auth          *MCPAuthCfg       `json:"auth,omitempty"`
 	Headers       map[string]string `json:"headers"`
 	DefaultPolicy string            `json:"default_policy"` // allow | confirm | deny
 	Tools         map[string]string `json:"tools"`
@@ -76,18 +77,20 @@ type mcpClient struct {
 	url       string
 	headers   map[string]string
 	sessionID string
+	name      string
+	cfg       MCPServerCfg
 	httpc     *http.Client
 	mu        sync.Mutex
 	id        int64
 }
 
-func startMCP(cfg MCPServerCfg) (*mcpClient, error) {
+func startMCP(name string, cfg MCPServerCfg) (*mcpClient, error) {
 	if cfg.URL != "" && cfg.Command != "" {
 		return nil, fmt.Errorf("mcp server: set either command or url, not both")
 	}
 	var c *mcpClient
 	if cfg.URL != "" {
-		c = newHTTPMCPClient(cfg)
+		c = newHTTPMCPClient(name, cfg)
 	} else {
 		if cfg.Command == "" {
 			return nil, fmt.Errorf("mcp server: command or url is required")
@@ -345,6 +348,17 @@ func runMCP(args []string) int {
 	switch rest[0] {
 	case "list":
 		return mcpList(c)
+	case "login":
+		if len(rest) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: ronin mcp login <server>")
+			return 2
+		}
+		srv, ok := c.MCP.Servers[rest[1]]
+		if !ok {
+			fmt.Fprintln(os.Stderr, "unknown MCP server:", rest[1])
+			return 2
+		}
+		return mcpLogin(rest[1], srv)
 	case "call":
 		if len(rest) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: ronin mcp call <server>.<tool> '<json-args>'")
@@ -373,7 +387,7 @@ func mcpList(c Config) int {
 			endpoint = s.URL
 		}
 		fmt.Printf("== %s (%s) ==\n", name, endpoint)
-		cl, err := startMCP(s)
+		cl, err := startMCP(name, s)
 		if err != nil {
 			fmt.Printf("  [failed to start: %v]\n", err)
 			continue
@@ -425,7 +439,7 @@ func mcpCall(c Config, qualified, argJSON string) int {
 			return 125
 		}
 	}
-	cl, err := startMCP(s)
+	cl, err := startMCP(server, s)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start MCP server:", err)
 		return 1
