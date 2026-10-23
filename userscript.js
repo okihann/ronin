@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ronin Agent
 // @namespace    ronin.agent
-// @version      3.6.0
+// @version      3.7.0
 // @description  Full-featured bash agent overlay with per-chat on/off toggle
 // @match        *://chat.deepseek.com/*
 // @match        *://chatgpt.com/*
@@ -588,9 +588,12 @@
         const command = capped[i];
         overlay.setCommand(`[${i + 1}/${capped.length}] $ ${command}`);
         overlay.setStatus(`running block ${i + 1}/${capped.length}`);
+        overlay.timerStart(`running block ${i + 1}/${capped.length}`);
         overlay.appendOutput(`\n=== Block ${i + 1} ===\n$ ${command}\n`);
 
         const result = await runOneBlock(command);
+        const elapsed = overlay.timerStop(false);
+        if (elapsed > 1000) overlay.appendOutput(`[took ${(elapsed / 1000).toFixed(1)}s]\n`);
         results.push(result);
 
         if (state.outputTruncated) { overlay.appendOutput('\n[output truncated at 1MB total]\n'); break; }
@@ -598,6 +601,7 @@
     } finally {
       state.running = false;
       state.batchApproved = false;
+      if (overlay.timerRunning && overlay.timerRunning()) overlay.timerStop(false);
     }
 
     const okCount = results.filter(r => r.code === 0).length;
@@ -824,6 +828,10 @@
         .status .tokens { color: #4ec9b0; cursor: pointer; }
         .status .tokens .label { color: #666; }
         .status .tokens:hover { text-decoration: underline; }
+        .status .timer { color: #dcdcaa; margin-left: 10px; cursor: pointer; }
+        .status .timer.running { color: #4ec9b0; }
+        .status .timer.slow { color: #f48771; }
+        .status .timer:hover { text-decoration: underline; }
         .history-wrap { flex: 1; display: none; flex-direction: column; }
         .history-head { padding: 5px 10px; background: #1a1a1a;
           border-bottom: 1px solid #333; font-size: 10px; color: #888;
@@ -962,6 +970,7 @@
         </div>
         <div class="status">
           <span id="statusText">idle</span>
+          <span class="timer" id="statusTimer" title="Click to reset session total"></span>
           <span class="tokens" id="statusTokens" title="Click to reset"><span class="label">tokens: </span>0</span>
         </div>
       </div>
@@ -980,6 +989,7 @@
     const $ = (id) => root.getElementById(id);
     const panel = $('panel'), out = $('out'), cmdEl = $('cmd'),
           statusEl = $('statusText'), statusTokens = $('statusTokens'),
+          statusTimer = $('statusTimer'),
           historyEl = $('history'), historyWrap = $('historyWrap'),
           debugEl = $('debug'), fab = $('fab');
     let output = '';
@@ -1186,6 +1196,65 @@
     syncEnabled();
     renderTokenUsage(state.tokenUsage);
 
+    // ---- build timer ----
+    const timer = { start: 0, running: false, sessionTotal: 0, tick: null, lastStatus: 'idle' };
+
+    function fmtDur(ms) {
+      const t = Math.floor(ms / 1000);
+      const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+      if (h > 0) return h + 'h ' + m + 'm ' + sec + 's';
+      if (m > 0) return m + 'm ' + sec + 's';
+      return sec + 's';
+    }
+
+    function paintTimer() {
+      const cur = timer.running ? Date.now() - timer.start : 0;
+      const total = timer.sessionTotal + cur;
+      let txt = '';
+      if (timer.running) {
+        txt = '\u23f1 ' + fmtDur(cur);
+        if (timer.sessionTotal > 0) txt += ' (total ' + fmtDur(total) + ')';
+      } else if (timer.sessionTotal > 0) {
+        txt = '\u23f1 total ' + fmtDur(timer.sessionTotal);
+      }
+      statusTimer.textContent = txt;
+      statusTimer.className = 'timer' + (timer.running ? (cur > 60000 ? ' slow' : ' running') : '');
+      if (txt) statusEl.textContent = timer.lastStatus;
+    }
+
+    function timerStart(label) {
+      if (timer.running) timerStop(true);
+      timer.start = Date.now();
+      timer.running = true;
+      if (label) timer.lastStatus = label;
+      if (timer.tick) clearInterval(timer.tick);
+      timer.tick = setInterval(paintTimer, 1000);
+      paintTimer();
+    }
+
+    function timerStop(keepStatus) {
+      if (!timer.running) return 0;
+      const elapsed = Date.now() - timer.start;
+      timer.sessionTotal += elapsed;
+      timer.running = false;
+      if (timer.tick) { clearInterval(timer.tick); timer.tick = null; }
+      if (!keepStatus && timer.lastStatus) statusEl.textContent = timer.lastStatus;
+      paintTimer();
+      return elapsed;
+    }
+
+    function timerReset() {
+      timer.sessionTotal = 0;
+      timer.running = false;
+      if (timer.tick) { clearInterval(timer.tick); timer.tick = null; }
+      timer.lastStatus = 'idle';
+      statusEl.textContent = 'idle';
+      paintTimer();
+    }
+
+    statusTimer.onclick = () => timerReset();
+    paintTimer();
+
     return {
       setCommand(c) { cmdEl.textContent = '$ ' + c; cmdEl.style.display = 'block'; output = ''; out.textContent = ''; },
       appendOutput(chunk) { if (!chunk) return; output += chunk; out.textContent = output; out.scrollTop = out.scrollHeight; },
@@ -1195,7 +1264,12 @@
         debugEl.scrollTop = debugEl.scrollHeight;
       },
       getOutput() { return output; },
-      setStatus(s) { statusEl.textContent = s; },
+      setStatus(s) { timer.lastStatus = s; statusEl.textContent = s; },
+      timerStart,
+      timerStop,
+      timerReset,
+      timerRunning() { return timer.running; },
+
       renderTokenUsage,
       showConfirmDialog,
       renderHistory,
@@ -1526,7 +1600,7 @@ Keep the whole report under 400 words. Be honest about what is uncertain — do 
   checkChatChange();
 
   if (state.debugEnabled) {
-    overlay.appendDebug('=== Ronin Agent v3.6 loaded ' + new Date().toISOString() + ' ===\n');
+    overlay.appendDebug('=== Ronin Agent v3.7 loaded ' + new Date().toISOString() + ' ===\n');
     overlay.appendDebug('chat id: ' + state.currentChatId + ' enabled=' + state.enabled + '\n');
   }
 })();
