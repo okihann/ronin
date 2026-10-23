@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type GitHubCfg struct {
 	AppID          string            `json:"app_id"`
 	PrivateKeyPath string            `json:"private_key_path"`
 	InstallationID int64             `json:"installation_id"`
+	TokenCachePath string            `json:"token_cache_path"`
 	DefaultPolicy  string            `json:"default_policy"`
 	Actions        map[string]string `json:"actions,omitempty"`
 }
@@ -99,9 +101,56 @@ func ghAPICall(method, path, jwt, token string, body io.Reader) (int, []byte, er
 	return resp.StatusCode, b, nil
 }
 
-// ghInstallationToken mints a fresh installation token. It is not cached
-// across processes (each CLI invocation is a new process); a single mint
-// costs one API call and tokens live an hour.
+type ghTokenCache struct {
+	Token     string `json:"token"`
+	ExpiresAt int64  `json:"expires_at"`
+	Install   int64  `json:"installation_id"`
+	AppID     string `json:"app_id"`
+}
+
+func ghTokenCachePath(c Config) string {
+	if c.GitHub.TokenCachePath != "" {
+		return c.GitHub.TokenCachePath
+	}
+	dir, err := os.UserCacheDir()
+	if err != nil || dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "ronin", "gh-token.json")
+}
+
+func ghReadTokenCache(p string) (ghTokenCache, bool) {
+	var tc ghTokenCache
+	if p == "" {
+		return tc, false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return tc, false
+	}
+	if json.Unmarshal(b, &tc) != nil || tc.Token == "" {
+		return tc, false
+	}
+	return tc, true
+}
+
+func ghWriteTokenCache(p string, tc ghTokenCache) {
+	if p == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return
+	}
+	b, err := json.Marshal(tc)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(p, b, 0o600)
+}
+
+// ghInstallationToken returns an installation token, reusing a cached one
+// while it still has more than five minutes of life left. Tokens live an
+// hour, so a warm cache removes an API round trip from every gh call.
 func ghInstallationToken(c Config) (string, error) {
 	if c.GitHub.AppID == "" || c.GitHub.PrivateKeyPath == "" {
 		return "", fmt.Errorf("github not configured: set github.app_id and github.private_key_path")
@@ -114,6 +163,16 @@ func ghInstallationToken(c Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	cachePath := ghTokenCachePath(c)
+	if tc, ok := ghReadTokenCache(cachePath); ok && tc.AppID == c.GitHub.AppID {
+		if c.GitHub.InstallationID == 0 || tc.Install == c.GitHub.InstallationID {
+			if time.Now().Unix() < tc.ExpiresAt-300 {
+				return tc.Token, nil
+			}
+		}
+	}
+
 	inst := c.GitHub.InstallationID
 	if inst == 0 {
 		code, body, err := ghAPICall("GET", "/app/installations", jwt, "", nil)
@@ -143,7 +202,8 @@ func ghInstallationToken(c Config) (string, error) {
 		return "", fmt.Errorf("mint token: http %d %s", code, strings.TrimSpace(string(body)))
 	}
 	var out struct {
-		Token string `json:"token"`
+		Token     string `json:"token"`
+		ExpiresAt string `json:"expires_at"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return "", err
@@ -151,6 +211,13 @@ func ghInstallationToken(c Config) (string, error) {
 	if out.Token == "" {
 		return "", fmt.Errorf("empty installation token")
 	}
+	exp := time.Now().Add(50 * time.Minute).Unix()
+	if t, err := time.Parse(time.RFC3339, out.ExpiresAt); err == nil {
+		exp = t.Unix()
+	}
+	ghWriteTokenCache(cachePath, ghTokenCache{
+		Token: out.Token, ExpiresAt: exp, Install: inst, AppID: c.GitHub.AppID,
+	})
 	return out.Token, nil
 }
 

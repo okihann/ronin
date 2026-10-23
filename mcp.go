@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,8 @@ type MCPServerCfg struct {
 	Command       string            `json:"command"`
 	Args          []string          `json:"args"`
 	Env           map[string]string `json:"env"`
+	URL           string            `json:"url"`
+	Headers       map[string]string `json:"headers"`
 	DefaultPolicy string            `json:"default_policy"` // allow | confirm | deny
 	Tools         map[string]string `json:"tools"`
 }
@@ -69,34 +72,46 @@ type mcpClient struct {
 		Write([]byte) (int, error)
 		Close() error
 	}
-	stdout *bufio.Reader
-	mu     sync.Mutex
-	id     int64
+	stdout    *bufio.Reader
+	url       string
+	headers   map[string]string
+	sessionID string
+	httpc     *http.Client
+	mu        sync.Mutex
+	id        int64
 }
 
 func startMCP(cfg MCPServerCfg) (*mcpClient, error) {
-	if cfg.Command == "" {
-		return nil, fmt.Errorf("empty command")
+	if cfg.URL != "" && cfg.Command != "" {
+		return nil, fmt.Errorf("mcp server: set either command or url, not both")
 	}
-	cmd := exec.Command(cfg.Command, cfg.Args...)
-	env := os.Environ()
-	for k, v := range cfg.Env {
-		env = append(env, k+"="+v)
+	var c *mcpClient
+	if cfg.URL != "" {
+		c = newHTTPMCPClient(cfg)
+	} else {
+		if cfg.Command == "" {
+			return nil, fmt.Errorf("mcp server: command or url is required")
+		}
+		cmd := exec.Command(cfg.Command, cfg.Args...)
+		env := os.Environ()
+		for k, v := range cfg.Env {
+			env = append(env, k+"="+v)
+		}
+		cmd.Env = env
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return nil, err
+		}
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, err
+		}
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		c = &mcpClient{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}
 	}
-	cmd.Env = env
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	c := &mcpClient{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}
 	if _, err := c.request("initialize", map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
@@ -110,6 +125,9 @@ func startMCP(cfg MCPServerCfg) (*mcpClient, error) {
 }
 
 func (c *mcpClient) request(method string, params any) (json.RawMessage, error) {
+	if c.url != "" {
+		return c.httpRequest(method, params)
+	}
 	c.mu.Lock()
 	c.id++
 	id := c.id
@@ -143,6 +161,10 @@ func (c *mcpClient) request(method string, params any) (json.RawMessage, error) 
 }
 
 func (c *mcpClient) notify(method string, params any) {
+	if c.url != "" {
+		_ = c.httpNotify(method, params)
+		return
+	}
 	msg := map[string]any{"jsonrpc": "2.0", "method": method, "params": params}
 	b, _ := json.Marshal(msg)
 	_, _ = c.stdin.Write(append(b, '\n'))
@@ -181,6 +203,10 @@ func (c *mcpClient) callTool(name string, args map[string]any) (json.RawMessage,
 }
 
 func (c *mcpClient) close() {
+	if c.url != "" {
+		c.httpClose()
+		return
+	}
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
@@ -342,7 +368,11 @@ func mcpList(c Config) int {
 	}
 	for _, name := range sortedServerNames(c.MCP.Servers) {
 		s := c.MCP.Servers[name]
-		fmt.Printf("== %s (%s) ==\n", name, s.Command)
+		endpoint := s.Command
+		if s.URL != "" {
+			endpoint = s.URL
+		}
+		fmt.Printf("== %s (%s) ==\n", name, endpoint)
 		cl, err := startMCP(s)
 		if err != nil {
 			fmt.Printf("  [failed to start: %v]\n", err)
