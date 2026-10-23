@@ -926,6 +926,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "gh" {
 		os.Exit(runGH(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "image" {
+		os.Exit(runImage(os.Args[2:]))
+	}
 	flag.Parse()
 
 	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
