@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ronin Agent
 // @namespace    ronin.agent
-// @version      3.7.0
+// @version      3.7.1
 // @description  Full-featured bash agent overlay with per-chat on/off toggle
 // @match        *://chat.deepseek.com/*
 // @match        *://chatgpt.com/*
@@ -365,7 +365,9 @@
         return origFetch.apply(this, args);
       }
       const url = (args[0] && args[0].url) || args[0] || '';
-      if (state.debugEnabled) { try { overlay.appendDebug('[fetch] ' + String(url).slice(0, 160) + '\n'); } catch (_) {} }
+      if (state.debugEnabled && /chat|message|conversation|completion|stream/i.test(String(url))) {
+        try { overlay.appendDebug('[fetch] ' + String(url).slice(0, 160) + '\n'); } catch (_) {}
+      }
       const resp = await origFetch.apply(this, args);
       const ct = resp.headers.get('content-type') || '';
       if (state.debugEnabled) { try { overlay.appendDebug('[fetch ct] ' + ct + '\n'); } catch (_) {} }
@@ -994,6 +996,25 @@
           debugEl = $('debug'), fab = $('fab');
     let output = '';
     let currentTab = 'output';
+    const DEBUG_CAP = 60000;
+    let debugHistory = '';
+    let debugDirty = false;
+    let debugTimer = null;
+
+    function scheduleDebugFlush() {
+      if (debugTimer !== null) return;
+      debugTimer = setTimeout(flushDebug, 250);
+    }
+
+    function flushDebug(force) {
+      if (debugTimer !== null) { clearTimeout(debugTimer); debugTimer = null; }
+      if (currentTab !== 'debug' && !force) return;
+      if (!debugDirty && !force) return;
+      debugDirty = false;
+      const atBottom = debugEl.scrollHeight - debugEl.scrollTop - debugEl.clientHeight < 40;
+      debugEl.textContent = debugHistory;
+      if (atBottom) debugEl.scrollTop = debugEl.scrollHeight;
+    }
 
     function syncPathInput() {
       const inp = $('pathInput');
@@ -1058,7 +1079,7 @@
         out.style.display = 'none'; historyWrap.style.display = 'none'; debugEl.style.display = 'none';
         if (currentTab === 'output') out.style.display = 'block';
         else if (currentTab === 'history') { historyWrap.style.display = 'flex'; renderHistory(); }
-        else debugEl.style.display = 'block';
+        else { debugEl.style.display = 'block'; flushDebug(true); }
       };
     });
 
@@ -1259,9 +1280,13 @@
       setCommand(c) { cmdEl.textContent = '$ ' + c; cmdEl.style.display = 'block'; output = ''; out.textContent = ''; },
       appendOutput(chunk) { if (!chunk) return; output += chunk; out.textContent = output; out.scrollTop = out.scrollHeight; },
       appendDebug(text) {
-        debugEl.textContent += text;
-        if (debugEl.textContent.length > 200000) debugEl.textContent = debugEl.textContent.slice(-100000);
-        debugEl.scrollTop = debugEl.scrollHeight;
+        if (!text) return;
+        debugHistory += text;
+        if (debugHistory.length > DEBUG_CAP) {
+          debugHistory = debugHistory.slice(-Math.floor(DEBUG_CAP * 0.6));
+        }
+        debugDirty = true;
+        scheduleDebugFlush();
       },
       getOutput() { return output; },
       setStatus(s) { timer.lastStatus = s; statusEl.textContent = s; },
@@ -1600,7 +1625,7 @@ Keep the whole report under 400 words. Be honest about what is uncertain — do 
   checkChatChange();
 
   if (state.debugEnabled) {
-    overlay.appendDebug('=== Ronin Agent v3.7 loaded ' + new Date().toISOString() + ' ===\n');
+    overlay.appendDebug('=== Ronin Agent v3.7.1 loaded ' + new Date().toISOString() + ' ===\n');
     overlay.appendDebug('chat id: ' + state.currentChatId + ' enabled=' + state.enabled + '\n');
   }
 })();
