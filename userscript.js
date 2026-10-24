@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ronin Agent
 // @namespace    ronin.agent
-// @version      3.7.1
+// @version      3.8.0
 // @description  Full-featured bash agent overlay with per-chat on/off toggle
 // @match        *://chat.deepseek.com/*
 // @match        *://chatgpt.com/*
@@ -1336,6 +1336,28 @@ user to approve and re-runs the same block automatically. Do not try to
 work around that prompt. If no MCP servers are configured, list prints a
 short notice - that is fine, just continue with normal shell work.
 
+# Skills (optional)
+
+Skills are reusable instruction packs installed on this machine. Each one
+is a directory with a SKILL.md holding a name, a one-line description, and
+a body of instructions for a specific kind of task.
+
+Before starting a task that looks like it has a skill, check what exists:
+
+    ./ronin skill list
+
+That prints one line per skill: name, source, and description, plus any
+bundled files. This is cheap, so check it early rather than guessing.
+
+When a skill matches, load its instructions before working:
+
+    ./ronin skill show <name>
+
+Follow the loaded instructions. If the skill lists bundled files, they are
+relative to the skill's location, which show prints. Do not load every
+skill up front - list is enough to decide, and show is only for the one you
+are actually using. If list reports no skills, carry on normally.
+
 # CRITICAL: First turn behavior
 
 On the FIRST message of a new chat, do NOT run any bash commands. Instead, reply with plain text (no code block) asking the user what they want to work on, and wait for their answer.
@@ -1625,7 +1647,7 @@ Keep the whole report under 400 words. Be honest about what is uncertain — do 
   checkChatChange();
 
   if (state.debugEnabled) {
-    overlay.appendDebug('=== Ronin Agent v3.7.1 loaded ' + new Date().toISOString() + ' ===\n');
+    overlay.appendDebug('=== Ronin Agent v3.8.0 loaded ' + new Date().toISOString() + ' ===\n');
     overlay.appendDebug('chat id: ' + state.currentChatId + ' enabled=' + state.enabled + '\n');
   }
 })();
