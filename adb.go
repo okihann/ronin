@@ -584,8 +584,17 @@ func runMCPAdb(args []string) int {
 			}
 			out, err := t.Run(p.Arguments)
 			if err != nil {
+				// adb writes its real diagnostic to stderr, which adbRun
+				// captures as output. Prefer that over the bare
+				// "exit status 1", which tells the caller nothing.
+				text := strings.TrimSpace(out)
+				if text == "" {
+					text = err.Error()
+				} else {
+					text += "\n[" + err.Error() + "]"
+				}
 				respond(map[string]any{
-					"content": []map[string]any{{"type": "text", "text": err.Error()}},
+					"content": []map[string]any{{"type": "text", "text": text}},
 					"isError": true,
 				})
 				continue
