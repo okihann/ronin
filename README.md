@@ -101,6 +101,46 @@ Tool policies are tiered:
 Unlisted tools fall back to `default_policy`, which defaults to **deny**
 (fail-closed). Run `ronin mcp list` to see every tool and its policy.
 
+## Android device control (mcp-adb)
+
+A built-in MCP server for driving an Android device over adb. It speaks
+stdio, so it works from Ronin and from any other MCP host:
+
+    ronin mcp-adb serve
+
+Configure it like any other stdio server:
+
+    "mcp": {
+      "servers": {
+        "adb": {
+          "command": "/path/to/ronin",
+          "args": ["mcp-adb", "serve"],
+          "default_policy": "confirm",
+          "tools": {
+            "adb.devices": "allow",
+            "adb.device_info": "allow",
+            "adb.shell": "confirm",
+            "adb.install": "confirm",
+            "adb.uninstall": "confirm"
+          }
+        }
+      }
+    }
+
+Nineteen tools: device listing, prop reads, package listing and metadata,
+install/uninstall, push/pull, logcat, screenshot, tap/swipe/text/key, and
+app launch/force-stop.
+
+`adb.shell` is allowlisted, not unrestricted. The first word must be on a
+short list of read-mostly commands, shell metacharacters (`;`, `|`, `&`,
+`>`, `<`, backticks, `$(`) are rejected outright, and state-changing
+subcommands (`pm uninstall`, `am force-stop`, `settings put`, ...) are
+refused even when the first word is allowed. There is no flashing, no
+bootloader mode, and no root toggle.
+
+`RONIN_ADB` overrides the adb binary path; `RONIN_ADB_SERIAL` selects a
+device when several are attached.
+
 ## Security model
 
 Three layers, evaluated in order:

@@ -932,6 +932,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "skill" {
 		os.Exit(runSkill(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp-adb" {
+		os.Exit(runMCPAdb(os.Args[2:]))
+	}
 	flag.Parse()
 
 	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
