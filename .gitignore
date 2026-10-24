@@ -13,3 +13,6 @@ config.json
 # GitHub App private keys — never commit
 *.pem
 *.private-key.pem
+
+# project-local skills are user content, not source
+.ronin/
