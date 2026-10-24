@@ -442,7 +442,13 @@ func mcpCall(c Config, qualified, argJSON string) int {
 		}
 	}
 	policy := s.policyFor(resolved)
-	approvalKey := server + "." + resolved + "." + argsHash(args)
+	// resolved may already carry the server prefix (adb.shell), so only
+	// add it when it is not there rather than producing adb.adb.shell.
+	keyPrefix := resolved
+	if !strings.HasPrefix(keyPrefix, server+".") {
+		keyPrefix = server + "." + keyPrefix
+	}
+	approvalKey := keyPrefix + "." + argsHash(args)
 	switch policy {
 	case "deny":
 		fmt.Fprintf(os.Stderr, "blocked by MCP policy: %s.%s is denied\n", server, tool)
