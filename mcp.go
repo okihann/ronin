@@ -402,7 +402,11 @@ func mcpList(c Config) int {
 			fmt.Println("  [no tools]")
 		}
 		for _, t := range tools {
-			fmt.Printf("  %-32s [%s]  %s\n", name+"."+t.Name, s.policyFor(t.Name), firstLine(t.Description))
+			qualified := t.Name
+			if !strings.HasPrefix(qualified, name+".") {
+				qualified = name + "." + qualified
+			}
+			fmt.Printf("  %-32s [%s]  %s\n", qualified, s.policyFor(t.Name), firstLine(t.Description))
 		}
 	}
 	return 0
@@ -427,15 +431,25 @@ func mcpCall(c Config, qualified, argJSON string) int {
 	if args == nil {
 		args = map[string]any{}
 	}
-	policy := s.policyFor(tool)
-	approvalKey := server + "." + tool + "." + argsHash(args)
+	// A server may name its own tools with a prefix (adb.devices). The
+	// qualified form the caller types is then server.tool, and splitting
+	// on the first dot yields a bare name that matches nothing. Prefer
+	// the namespaced key when it is the one the config knows about.
+	resolved := tool
+	if _, ok := s.Tools[tool]; !ok {
+		if _, ok := s.Tools[server+"."+tool]; ok {
+			resolved = server + "." + tool
+		}
+	}
+	policy := s.policyFor(resolved)
+	approvalKey := server + "." + resolved + "." + argsHash(args)
 	switch policy {
 	case "deny":
 		fmt.Fprintf(os.Stderr, "blocked by MCP policy: %s.%s is denied\n", server, tool)
 		return 126
 	case "confirm":
 		if os.Getenv("RONIN_MCP_APPROVAL") != approvalKey {
-			fmt.Fprintf(os.Stderr, "[ronin-mcp-confirm] server=%s tool=%s approval=%s\n", server, tool, approvalKey)
+			fmt.Fprintf(os.Stderr, "[ronin-mcp-confirm] server=%s tool=%s approval=%s\n", server, resolved, approvalKey)
 			return 125
 		}
 	}
@@ -445,7 +459,7 @@ func mcpCall(c Config, qualified, argJSON string) int {
 		return 1
 	}
 	defer cl.close()
-	res, err := cl.callTool(tool, args)
+	res, err := cl.callTool(resolved, args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "call failed:", err)
 		return 1
