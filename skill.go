@@ -140,7 +140,7 @@ func skillFiles(dir string) []string {
 			return nil
 		}
 		if info.IsDir() {
-			if info.Name() == ".git" || info.Name() == "node_modules" {
+			if info.Name() == ".git" || info.Name() == "node_modules" || info.Name() == "__pycache__" {
 				return filepath.SkipDir
 			}
 			return nil
