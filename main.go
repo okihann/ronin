@@ -150,13 +150,12 @@ func init() {
 		// power control
 		regexp.MustCompile(`\b(shutdown|reboot|halt|poweroff)\b`),
 		regexp.MustCompile(`\binit\s+[06]\b`),
-		// bootloader flashing tool. This is the one-way door on a
-		// phone: a bad flash there can leave it unbootable, and no
-		// agent should be able to reach it. Written with a [b]
-		// class so this source line does not itself match.
-		// An invocation, not a mention: at the start of the command
-		// or after a shell separator, optionally with a path prefix,
-		// followed by a known subcommand. Prose passes.
+		// Bootloader flashing is the one-way door: a bad write can
+		// leave the phone unbootable, so no agent should reach it.
+		// Matches an invocation (start of command or after a shell
+		// separator, optional path prefix, then a known subcommand)
+		// rather than the bare word, so prose and file paths pass.
+		// Written with a [b] class so this source cannot trip it.
 		regexp.MustCompile(`(^|[;&|]\s*)(\S*/)?fast[b]oot(\s+(devices|getvar|flash|erase|format|reboot|boot|oem|flashing|update|set_active|--version)\b|\s*$)`),
 	}
 
