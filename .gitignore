@@ -16,3 +16,7 @@ config.json
 
 # project-local skills are user content, not source
 .ronin/
+
+# python bytecode from bundled skill scripts
+__pycache__/
+*.pyc
